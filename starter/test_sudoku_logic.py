@@ -62,10 +62,8 @@ class TestValidation:
         empty_board[0][0] = 5
         # (1, 1) is in same 3x3 box as (0, 0)
         assert sudoku_logic.is_safe(empty_board, 1, 1, 5) is False
-        # (0, 4) is NOT in same 3x3 box as (0, 0)
-        assert sudoku_logic.is_safe(empty_board, 0, 4, 5) is True
 
-    @pytest.mark.parametrize("row,col", [(0, 3), (3, 0), (3, 3)])
+    @pytest.mark.parametrize("row,col", [(1, 3), (3, 1), (3, 3)])
     def test_is_safe_different_3x3_boxes(self, empty_board, row, col):
         """Test that same number is safe in different 3x3 boxes."""
         empty_board[0][0] = 5
@@ -91,6 +89,17 @@ class TestPuzzleGeneration:
         assert count >= 1
         assert isinstance(count, int)
 
+    def test_count_solutions_detects_multiple_solutions(self, empty_board):
+        """Test that an empty puzzle is identified as having multiple solutions."""
+        assert sudoku_logic.count_solutions(empty_board, limit=2) == 2
+
+    def test_count_solutions_detects_zero_solutions(self, empty_board):
+        """Test that contradictory clues are identified as having no solutions."""
+        empty_board[0][0] = 5
+        empty_board[0][1] = 5
+        assert sudoku_logic.count_solutions(empty_board, limit=2) == 0
+        assert sudoku_logic.has_unique_solution(empty_board) is False
+
     def test_has_unique_solution_valid_puzzle(self, puzzle_and_solution):
         """Test that generated puzzles have unique solutions."""
         puzzle, _ = puzzle_and_solution
@@ -101,21 +110,41 @@ class TestPuzzleGeneration:
         puzzle, solution = sudoku_logic.generate_puzzle(difficulty='easy')
         assert puzzle is not None
         assert solution is not None
-        assert count_clues(puzzle) >= 40  # Easy has ~42 clues
+        assert count_clues(puzzle) == sudoku_logic.DIFFICULTY_CLUES['easy']
 
     def test_generate_puzzle_medium(self):
         """Test generating medium puzzle."""
         puzzle, solution = sudoku_logic.generate_puzzle(difficulty='medium')
         assert puzzle is not None
         assert solution is not None
-        assert count_clues(puzzle) >= 30  # Medium has ~34 clues
+        assert count_clues(puzzle) == sudoku_logic.DIFFICULTY_CLUES['medium']
 
     def test_generate_puzzle_hard(self):
         """Test generating hard puzzle."""
         puzzle, solution = sudoku_logic.generate_puzzle(difficulty='hard')
         assert puzzle is not None
         assert solution is not None
-        assert count_clues(puzzle) >= 26  # Hard has ~28 clues
+        assert count_clues(puzzle) == sudoku_logic.DIFFICULTY_CLUES['hard']
+
+    def test_difficulty_levels_have_distinct_clue_counts(self):
+        """Test that the supported difficulty settings are meaningfully different."""
+        clue_counts = [
+            sudoku_logic.resolve_clues(difficulty=difficulty)
+            for difficulty in ('easy', 'medium', 'hard')
+        ]
+        assert clue_counts == [42, 34, 28]
+
+    @pytest.mark.parametrize("difficulty", ["easy", "medium", "hard"])
+    def test_generated_puzzle_has_exactly_one_solution(self, difficulty):
+        """Test every supported difficulty produces exactly one solution."""
+        puzzle, solution = sudoku_logic.generate_puzzle(difficulty=difficulty)
+        assert sudoku_logic.count_solutions(
+            sudoku_logic.deep_copy(puzzle), limit=2
+        ) == 1
+        assert sudoku_logic.is_valid_generated_puzzle(
+            puzzle, sudoku_logic.DIFFICULTY_CLUES[difficulty]
+        ) is True
+        assert is_valid_board(solution)
 
     def test_generate_puzzle_custom_clues(self):
         """Test generating puzzle with custom clue count."""

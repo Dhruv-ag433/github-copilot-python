@@ -240,6 +240,13 @@ def count_clues(board):
     """
     return sum(1 for row in board for cell in row if cell != 0)
 
+def is_valid_generated_puzzle(puzzle, clues):
+    """Return whether a generated puzzle has the requested clue count and one solution."""
+    return (
+        count_clues(puzzle) == clues
+        and verify_puzzle_uniqueness(puzzle)['unique']
+    )
+
 def generate_puzzle(clues=None, difficulty='medium'):
     """
     Generate a Sudoku puzzle with GUARANTEED unique solution.
@@ -292,9 +299,8 @@ def generate_puzzle(clues=None, difficulty='medium'):
         
         # Phase 3: Verify puzzle meets all criteria
         cells_removed_correct = removed == SIZE * SIZE - clues
-        has_unique = has_unique_solution(puzzle)
-        
-        if cells_removed_correct and has_unique:
+
+        if cells_removed_correct and is_valid_generated_puzzle(puzzle, clues):
             return deep_copy(puzzle), solution
     
     # Should almost never reach here - 100 attempts is excessive redundancy

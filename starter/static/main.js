@@ -7,8 +7,10 @@ let puzzle = [];
 let currentBoard = [];
 let timerIntervalId = null;
 let timerStartTime = null;
+let elapsedSeconds = 0;
 let currentDifficulty = 'medium';
 let currentTheme = 'light';
+let gameCompleted = false;
 
 function getSelectedDifficulty() {
   const select = document.getElementById('difficulty');
@@ -62,7 +64,7 @@ function formatElapsedTime(totalSeconds) {
 
 function getElapsedSeconds() {
   if (!timerStartTime) {
-    return 0;
+    return elapsedSeconds;
   }
   return Math.floor((Date.now() - timerStartTime) / 1000);
 }
@@ -79,12 +81,17 @@ function renderTimer() {
 
 function startTimer() {
   stopTimer();
+  elapsedSeconds = 0;
   timerStartTime = Date.now();
   renderTimer();
   timerIntervalId = window.setInterval(renderTimer, 1000);
 }
 
 function stopTimer() {
+  if (timerStartTime !== null) {
+    elapsedSeconds = Math.floor((Date.now() - timerStartTime) / 1000);
+    timerStartTime = null;
+  }
   if (timerIntervalId !== null) {
     window.clearInterval(timerIntervalId);
     timerIntervalId = null;
@@ -93,167 +100,155 @@ function stopTimer() {
 
 function resetTimer() {
   stopTimer();
-  timerStartTime = null;
+  elapsedSeconds = 0;
   renderTimer();
 }
 
-/**
- * Load high scores from localStorage.
- * Returns an array sorted by time (fastest first).
- * @returns {Array} Array of score entries, already sorted and limited to top 10
- */
+function normalizeLeaderboardEntries(entries) {
+  if (!Array.isArray(entries)) {
+    return [];
+  }
+
+  return entries.filter((entry) => (
+    entry &&
+    typeof entry === 'object' &&
+    typeof entry.name === 'string' &&
+    Number.isFinite(entry.timeSeconds) &&
+    entry.timeSeconds >= 0 &&
+    typeof entry.difficulty === 'string' &&
+    entry.difficulty.length > 0
+  ));
+}
+
+function sortLeaderboardEntries(entries) {
+  return normalizeLeaderboardEntries(entries).sort((left, right) => {
+    if (left.timeSeconds !== right.timeSeconds) {
+      return left.timeSeconds - right.timeSeconds;
+    }
+    return (left.createdAt || 0) - (right.createdAt || 0);
+  });
+}
+
 function loadLeaderboard() {
   try {
     const raw = window.localStorage.getItem(LEADERBOARD_STORAGE_KEY);
     const entries = raw ? JSON.parse(raw) : [];
-    if (!Array.isArray(entries)) {
-      return [];
+    const sortedEntries = sortLeaderboardEntries(entries).slice(0, MAX_LEADERBOARD_ENTRIES);
+
+    if (raw && JSON.stringify(sortedEntries) !== JSON.stringify(entries)) {
+      window.localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(sortedEntries));
     }
-    // Ensure entries are sorted by time (fastest first)
-    return entries.sort((left, right) => left.timeSeconds - right.timeSeconds).slice(0, 10);
+
+    return sortedEntries;
   } catch (error) {
     console.error('Error loading leaderboard:', error);
     return [];
   }
 }
 
-/**
- * Save high scores to localStorage.
- * Automatically maintains only top 10 entries.
- * @param {Array} entries - Array of score entries to save
- */
 function saveLeaderboard(entries) {
   try {
-    // Sort and keep only top 10
-    const sortedEntries = entries
-      .sort((left, right) => {
-        if (left.timeSeconds !== right.timeSeconds) {
-          return left.timeSeconds - right.timeSeconds;
-        }
-        return left.createdAt - right.createdAt;
-      })
-      .slice(0, 10);
+    const sortedEntries = sortLeaderboardEntries(entries).slice(0, MAX_LEADERBOARD_ENTRIES);
     window.localStorage.setItem(LEADERBOARD_STORAGE_KEY, JSON.stringify(sortedEntries));
+    return sortedEntries;
   } catch (error) {
     console.error('Error saving leaderboard:', error);
-    // Ignore storage failures so gameplay still works.
+    return [];
   }
 }
 
-/**
- * Clear all scores from the leaderboard.
- * Requires user confirmation.
- * @returns {Boolean} True if cleared, false if cancelled
- */
 function clearLeaderboard() {
-  if (confirm('Are you sure you want to delete all high scores? This cannot be undone.')) {
-    try {
-      window.localStorage.removeItem(LEADERBOARD_STORAGE_KEY);
-      renderLeaderboard();
-      return true;
-    } catch (error) {
-      console.error('Error clearing leaderboard:', error);
-      return false;
-    }
+  if (!confirm('Are you sure you want to delete all high scores? This cannot be undone.')) {
+    return false;
   }
-  return false;
+
+  try {
+    window.localStorage.removeItem(LEADERBOARD_STORAGE_KEY);
+    renderLeaderboard();
+    return true;
+  } catch (error) {
+    console.error('Error clearing leaderboard:', error);
+    return false;
+  }
 }
 
-/**
- * Get leaderboard statistics.
- * @returns {Object} Object containing count, best time, average time, by difficulty
- */
 function getLeaderboardStats() {
   const entries = loadLeaderboard();
   if (entries.length === 0) {
-    return {
-      count: 0,
-      bestTime: null,
-      averageTime: null,
-      byDifficulty: {}
-    };
+    return { count: 0, bestTime: null, averageTime: null, byDifficulty: {} };
   }
 
   const totalTime = entries.reduce((sum, entry) => sum + entry.timeSeconds, 0);
-  const avgTime = Math.round(totalTime / entries.length);
-
   const byDifficulty = {};
   for (const entry of entries) {
-    const diff = entry.difficulty || 'unknown';
-    if (!byDifficulty[diff]) {
-      byDifficulty[diff] = [];
+    const difficulty = entry.difficulty || 'unknown';
+    if (!byDifficulty[difficulty]) {
+      byDifficulty[difficulty] = [];
     }
-    byDifficulty[diff].push(entry);
+    byDifficulty[difficulty].push(entry);
   }
 
   return {
     count: entries.length,
-    bestTime: entries[0]?.timeSeconds || null,
-    averageTime: avgTime,
+    bestTime: entries[0].timeSeconds,
+    averageTime: Math.round(totalTime / entries.length),
     byDifficulty
   };
 }
 
-/**
- * Check if a score would place on the leaderboard.
- * @param {number} timeSeconds - Time to check
- * @returns {Object} Object with {wouldPlace: boolean, rank: number|null}
- */
 function checkLeaderboardPlacement(timeSeconds) {
   const entries = loadLeaderboard();
   const rank = entries.findIndex(entry => entry.timeSeconds > timeSeconds);
-  
-  if (entries.length < 10) {
-    return { wouldPlace: true, rank: entries.length + 1 };
-  }
-  
   if (rank !== -1) {
     return { wouldPlace: true, rank: rank + 1 };
   }
-  
+  if (entries.length < MAX_LEADERBOARD_ENTRIES) {
+    return { wouldPlace: true, rank: entries.length + 1 };
+  }
   return { wouldPlace: false, rank: null };
 }
 
-/**
- * Export leaderboard as JSON.
- * @returns {string} JSON string of all scores
- */
 function exportLeaderboard() {
-  const entries = loadLeaderboard();
-  return JSON.stringify(entries, null, 2);
+  return JSON.stringify(loadLeaderboard(), null, 2);
 }
 
-/**
- * Import leaderboard from JSON.
- * Merges with existing scores and keeps top 10.
- * @param {string} jsonString - JSON string to import
- * @returns {Boolean} True if successful, false if error
- */
 function importLeaderboard(jsonString) {
   try {
     const imported = JSON.parse(jsonString);
-    if (!Array.isArray(imported)) {
-      console.error('Invalid format: expected array');
+    if (!Array.isArray(imported) || normalizeLeaderboardEntries(imported).length !== imported.length) {
       return false;
     }
-    
-    // Validate entries have required fields
-    for (const entry of imported) {
-      if (!entry.name || typeof entry.timeSeconds !== 'number' || !entry.difficulty) {
-        console.error('Invalid entry format');
-        return false;
-      }
-    }
-    
-    const existing = loadLeaderboard();
-    const merged = [...existing, ...imported];
-    saveLeaderboard(merged);
+    saveLeaderboard([...loadLeaderboard(), ...imported]);
     renderLeaderboard();
     return true;
   } catch (error) {
     console.error('Error importing leaderboard:', error);
     return false;
   }
+}
+
+function addLeaderboardEntry(name, timeSeconds, difficulty) {
+  const trimmedName = typeof name === 'string' ? name.trim() : '';
+  if (!Number.isFinite(timeSeconds) || timeSeconds < 0) {
+    return { placed: false, rank: null };
+  }
+
+  const entry = {
+    name: trimmedName || 'Anonymous',
+    timeSeconds,
+    difficulty: difficulty || 'medium',
+    createdAt: Date.now(),
+  };
+  const sortedEntries = sortLeaderboardEntries([...loadLeaderboard(), entry]);
+  const placementIndex = sortedEntries.indexOf(entry);
+
+  if (placementIndex >= 0 && placementIndex < MAX_LEADERBOARD_ENTRIES) {
+    saveLeaderboard(sortedEntries);
+    renderLeaderboard();
+    return { placed: true, rank: placementIndex + 1 };
+  }
+
+  return { placed: false, rank: null };
 }
 
 function formatDifficultyLabel(difficulty) {
@@ -320,37 +315,6 @@ function renderLeaderboard() {
 
     tbody.appendChild(row);
   }
-}
-
-/**
- * Add a new entry to the leaderboard and save.
- * Automatically maintains top 10.
- * @param {string} name - Player name
- * @param {number} timeSeconds - Time in seconds
- * @param {string} difficulty - Difficulty level
- * @returns {Object} Result object with {placed: boolean, rank: number|null}
- */
-function addLeaderboardEntry(name, timeSeconds, difficulty) {
-  const trimmedName = name.trim();
-  const entry = {
-    name: trimmedName || 'Anonymous',
-    timeSeconds: Math.max(0, timeSeconds), // Ensure non-negative
-    difficulty: difficulty || 'medium',
-    createdAt: Date.now(),
-  };
-
-  // Check placement before adding
-  const placement = checkLeaderboardPlacement(entry.timeSeconds);
-
-  if (placement.wouldPlace) {
-    const entries = loadLeaderboard();
-    entries.push(entry);
-    saveLeaderboard(entries);
-    renderLeaderboard();
-    return { placed: true, rank: placement.rank };
-  }
-
-  return { placed: false, rank: null };
 }
 
 function getBoxClass(row, col) {
@@ -508,6 +472,7 @@ function applyHintToBoard(row, col, value) {
 
 async function newGame() {
   resetTimer();
+  gameCompleted = false;
   currentDifficulty = getSelectedDifficulty();
   const res = await fetch(`/new?difficulty=${encodeURIComponent(currentDifficulty)}`);
   const data = await res.json();
@@ -533,6 +498,10 @@ async function requestHint() {
 }
 
 async function checkSolution() {
+  if (gameCompleted) {
+    return;
+  }
+
   const inputs = getBoardInputs();
   updateCurrentBoardFromInputs();
   const res = await fetch('/check', {
@@ -558,6 +527,7 @@ async function checkSolution() {
     }
   }
   if (incorrect.size === 0) {
+    gameCompleted = true;
     stopTimer();
     const timeSeconds = getElapsedSeconds();
     

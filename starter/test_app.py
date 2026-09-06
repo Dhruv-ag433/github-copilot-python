@@ -58,6 +58,8 @@ class TestNewGameRoute:
         assert response.status_code == 200
         data = json.loads(response.data)
         assert 'puzzle' in data
+        clue_count = sum(1 for row in data['puzzle'] for cell in row if cell != 0)
+        assert clue_count == sudoku_logic.DIFFICULTY_CLUES[difficulty]
 
     def test_new_game_with_custom_clues(self, client):
         """Test generating puzzle with custom clue count."""
@@ -163,15 +165,15 @@ class TestHintRoute:
         app_module.store_current_game(puzzle, solution)
 
         response = client.post('/hint')
-        if response.status_code == 200:
-            data = json.loads(response.data)
-            assert 'row' in data
-            assert 'col' in data
-            assert 'value' in data
-            row, col, value = data['row'], data['col'], data['value']
-            assert 0 <= row < 9
-            assert 0 <= col < 9
-            assert 1 <= value <= 9
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        assert 'row' in data
+        assert 'col' in data
+        assert 'value' in data
+        row, col, value = data['row'], data['col'], data['value']
+        assert 0 <= row < 9
+        assert 0 <= col < 9
+        assert 1 <= value <= 9
 
     def test_hint_provides_correct_value(self, client, app_context):
         """Test that hint value matches solution."""
@@ -179,10 +181,10 @@ class TestHintRoute:
         app_module.store_current_game(puzzle, solution)
 
         response = client.post('/hint')
-        if response.status_code == 200:
-            data = json.loads(response.data)
-            row, col, value = data['row'], data['col'], data['value']
-            assert solution[row][col] == value
+        assert response.status_code == 200
+        data = json.loads(response.data)
+        row, col, value = data['row'], data['col'], data['value']
+        assert solution[row][col] == value
 
     def test_hint_returns_json(self, client, app_context):
         """Test that /hint returns JSON response."""
@@ -198,11 +200,8 @@ class TestHelperFunctions:
 
     def test_get_request_difficulty_default(self, client, app_context):
         """Test that difficulty defaults to medium."""
-        with client:
-            client.get('/new')
-            difficulty = app_module.get_request_difficulty()
-            # Note: This test may not work perfectly in pytest context
-            # It's here to document the expected behavior
+        with app_module.app.test_request_context('/new'):
+            assert app_module.get_request_difficulty() == 'medium'
 
     def test_has_locked_cell_changed_unchanged(self):
         """Test locked cell detection when no changes."""
